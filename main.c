@@ -4,30 +4,181 @@
 #include "NVIC.h"
 #include "PIT.h"
 #include "Senales.h"
+#include "bits.h"
+
+#define PIT_IRQ_PRIORITY 2
+
+#define PIT_DEFAULT_FREQ 500000U
+#define PIT_MAX_FREQ 1500000U
+#define PIT_FREQ_STEP 500000U
+
+volatile bool sw2_pressed = false;
+volatile bool sw3_pressed = false;
+volatile uint32_t pit_freq = PIT_DEFAULT_FREQ;
+volatile uint8_t waveform_type = sine_wave;
+
+/* DMA channel configuration */
+//dma_handle_t g_dmaHandle;
+//dma_transfer_config_t g_transferConfig;
+
+/* DAC buffer */
+//uint16_t dacBuffer[DAC_BUFFER_SIZE];
+
+/* PIT interrupt handler */
+void PIT_IRQHandler(void) {
+    /* Clear interrupt flag */
+    PIT_ClearStatusFlags(PIT, kPIT_Chnl_0, kPIT_TimerFlag);
+
+    /* Update PIT period based on current frequency */
+    uint32_t current_period = USEC_TO_COUNT(1000000U / pit_freq, CLOCK_GetFreq(kCLOCK_BusClk));
+    PIT_SetTimerPeriod(PIT, kPIT_Chnl_0, current_period);
+
+    /* Transfer data to DAC */
+    DMA_SubmitTransfer(&g_dmaHandle, &g_transferConfig);
+    DMA_StartTransfer(&g_dmaHandle);
+}
+
+/* SW2 interrupt handler */
+void GPIO_SW2_IRQHandler(void) {
+    sw2_pressed = true;
+    NVIC_ClearPendingIRQ(GPIO_SW2_IRQn);
+}
+
+/* SW3 interrupt handler */
+void GPIO_SW3_IRQHandler(void) {
+    sw3_pressed = true;
+    NVIC_ClearPendingIRQ(GPIO_SW3_IRQn);
+}
+
 
 int main(void) {
-    // Initialize modules
-    DAC_init();
-    DMA_init();
-    GPIO_config();
-    PIT_init(500000); // Initialize PIT with a frequency of 500 kHz
+    /* Board and clock initialization */
+    BOARD_InitBootPins();
+    BOARD_InitBootClocks();
 
-    // Set initial signal and frequency
-    DAC_Set_signal(SIGNAL_SINE, 1000);
+    /* DMA, PIT, DAC and GPIO initialization */
+    DMA_Init();
+    PIT_Init();
+    DAC_Init();
+    GPIO_Init();
+    NVIC_SetPriority(PIT_IRQn, PIT_IRQ_PRIORITY);
+    NVIC_SetPriority(GPIO_SW2_IRQn, 1);
+    NVIC_SetPriority(GPIO_SW3_IRQn, 1);
 
-    // Enable PIT
-    PIT_enable();
+    /* Generate waveforms in memory */
+    generate_waveforms();
+
+    /* Configure DMA channel */
+    DMA_CreateHandle(&g_dmaHandle, DMA0, 0U);
+    DMA_SetCallback(&g_dmaHandle, DMA_Callback, NULL);
+    DMA_PrepareTransfer(&g_transferConfig, &dacBuffer, sizeof(dacBuffer[0]), (void *)&sine_wave, sizeof(sine_wave[0]), sizeof(sine_wave), kDMA_MemoryToPeripheral);
+    DMA_EnableChannel(DMA0, 0U);
+
+    /* Configure PIT channel */
+    PIT_SetTimerPeriod(PIT, kPIT_Chnl_0, USEC_TO_COUNT(1000000U / pit_freq, CLOCK_GetFreq(kCLOCK_BusClk)));
+    PIT_EnableInterrupts(PIT, kPIT_Chnl_0, kPIT_TimerInterruptEnable);
+    PIT_StartTimer(PIT, kPIT_Chnl_0);
 
     while (1) {
-        // The rest of the program will be handled by interrupts
-    }
+        if (sw2_pressed) {
+            /* Update frequency */
+            pit_freq += PIT_FREQ_STEP;
+            if (pit_freq > PIT_MAX_FREQ) {
+                pit_freq = PIT_DEFAULT_FREQ;
+            }
 
-    return 0;
+            /* Clear flag */
+            sw2_pressed = false;
+        }
+
+        if (sw3_pressed) {
+            /* Update waveform */
+            waveform_type++;
+            if (waveform_type > WAVEFORM_TYPE_SAWTOOTH) {
+                waveform_type = WAVEFORM_TYPE_SINE;
+            }
+
+            /* Update DAC buffer */
+            switch (waveform_type) {
+                case WAVEFORM_TYPE_SINE:
+                    for (int i = 0; i < DAC_BUFFER_SIZE; i++) {
+                        dacBuffer[i] = sine_wave[i];
+                    }
+                    break;
+                case WAVEFORM_TYPE_TRIANGLE:
+                    for (int i = 0; i < DAC_BUFFER_SIZE; i++) {
+                        dacBuffer[i] = triangle_wave[i];
+                    }
+                    break;
+                case WAVEFORM_TYPE_SAWTOOTH:
+                    for (int i = 0; i < DAC_BUFFER_SIZE; i++) {
+                        dacBuffer[i] = sawtooth_wave[i];
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            /* Clear flag */
+            sw3_pressed = false;
+        }
+    }
 }
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//#include "DAC.h"
+//#include "DMA.h"
+//#include "GPIO.h"
+//#include "NVIC.h"
+//#include "PIT.h"
+//#include "Senales.h"
+//
+//int main(void) {
+//    // Initialize modules
+//    DAC_init();
+//    DMA_init();
+//    GPIO_config();
+//    PIT_init(500000); // Initialize PIT with a frequency of 500 kHz
+//
+//    // Set initial signal and frequency
+//    DAC_Set_signal(SIGNAL_SINE, 1000);
+//
+//    // Enable PIT
+//    PIT_enable();
+//
+//    while (1) {
+//        // The rest of the program will be handled by interrupts
+//    }
+//
+//    return 0;
+//}
+//
+//
+//
+//
 
 
 
